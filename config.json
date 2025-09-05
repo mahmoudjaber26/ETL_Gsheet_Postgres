@@ -1,0 +1,45 @@
+{
+  "mobility": {
+    "file_name": "Gulf And Arab Mobility",
+    "sheet_file": {
+      "Arab Assist Jordan New version": "mobility_merged",
+      "Assistance services ARABIA INSURANCE new (copy)": "mobility_merged",
+      "Assistance services Survey General Gulf NV": "mobility_merged",
+      "Assistance services BAHRAIN NATIONAL INSURANCE NV": "mobility_merged",
+      "Assistance services SNIC INSURANCE NV": "mobility_merged",
+      "Assistance services UNITED INSURANCE NV": "mobility_merged",
+      "Assistance services GIG NV": "mobility_merged",
+      "Assistance services GIG TAKAFUL NV": "mobility_merged",
+      "Assistance services SOLIDARITY INSURANCE NV": "mobility_merged",
+      "Replacement & Taxi survey": "mobility_replacement__taxi_survey",
+      "GM Quality Survey (copy)": "mobility_gm_quality_survey_copy"
+    }
+  },
+  "Home": {
+    "file_name": "Home Assistance",
+    "sheet_file": {
+      "Emergency Home Assistance service GA NV": "home_assistance_merged"
+    }
+  },
+  "Travel": {
+    "file_name": "Travel Data",
+    "sheet_file": {
+      "Travel Claim Reimbursement Survey": "travel_merged",
+      "Travel Assistance services WhatsApp NV": "travel_merged"
+    }
+  },
+  "Devices": {
+    "file_name": "Personal Line (devices)",
+    "sheet_file": {
+      "Personal Line Survey Office": "personal_line_merged",
+      "Personal Line Whatsapp": "personal_line_whatsapp"
+    }
+  },
+  "Nissan": {
+    "file_name": "Nissan Assistance",
+    "sheet_file": {
+      "Nissan RSA": "nissan_assistance_merged",
+      "Nissan P&D": "nissan_assistance_nissan_pd"
+    }
+  }
+}
