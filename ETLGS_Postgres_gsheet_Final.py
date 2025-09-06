@@ -24,7 +24,7 @@ logging.getLogger().addHandler(console)
 DEFAULT_DB_URI = os.getenv("DB_URI", "").strip()
 if not DEFAULT_DB_URI:
     # Replace with your own if not using env vars
-    DEFAULT_DB_URI = "postgresql://neondb_owner:npg_9vchZgGPO1dj@ep-fancy-surf-a8vwb975.eastus2.azure.neon.tech:5432/neondb?sslmode=require&connect_timeout=10&keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5&gssencmode=disable"
+    DEFAULT_DB_URI = "postgresql://neondb_owner:npg_9vchZgGPO1dj@ep-fancy-surf-a8vwb975.eastus2.azure.neon.tech/neondb?sslmode=require&connect_timeout=10&keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5&gssencmode=disable"
     DB_URI = DEFAULT_DB_URI
     
     
@@ -187,4 +187,5 @@ if __name__ == "__main__":
                 logging.info("🔒 PostgreSQL connection closed")
         except NameError:
             pass
+
     logging.info("✅ ETL Job Finished")
