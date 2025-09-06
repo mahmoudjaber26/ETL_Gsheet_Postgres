@@ -29,26 +29,17 @@ jobs:
             google-cloud-bigquery>=3.20.0 \
             gspread oauth2client
 
-      - name: Sanity show files and secrets presence
+      - name: Sanity: show files and secrets presence
         run: |
           ls -la
-          python - << 'PY'
-import os, sys, pathlib
-print("Python:", sys.version)
-print("Has config.json:", pathlib.Path("config.json").exists())
-print("Has GOOGLE_CREDENTIALS_JSON secret in env? (should be False here):", bool(os.getenv("GOOGLE_CREDENTIALS_JSON")))
-PY
-
-      - name: Write Google credentials file from secret
-        run: |
-          echo "$GOOGLE_CREDENTIALS_JSON" > powerbi-etl-creds.json
-          python - << 'PY'
-import json
-data = json.load(open('powerbi-etl-creds.json'))
-print("Service account email:", data.get('client_email'))
-PY
-        env:
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          python -c "import os,sys,pathlib; print('Python:', sys.version); print('Has config.json:', pathlib.Path('config.json').exists()); print('Has GOOGLE_CREDENTIALS_JSON secret in env? (should be False here):', bool(os.getenv('GOOGLE_CREDENTIALS_JSON')))"
+      
+      - name: Write Google credentials file from secret 
+       run: |
+         echo "$GOOGLE_CREDENTIALS_JSON" > powerbi-etl-creds.json
+         python -c "import json; d=json.load(open('powerbi-etl-creds.json')); print('Service account email:', d.get('client_email'))"
+      env:
+        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
       - name: Run ETL (Sheets → BigQuery)
         env:
