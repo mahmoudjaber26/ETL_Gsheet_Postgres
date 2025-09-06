@@ -32,9 +32,10 @@ jobs:
 
       - name: Run ETL
         env:
-          DB_URI: ${{ secrets.DB_URI }}
           ETL_CONFIG_FILE: config.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
+          GCP_PROJECT: powerbi-etl
+          BQ_DATASET: ETL_Dataset
         run: |
           python ETLGS_Postgres_gsheet_Final.py
           
