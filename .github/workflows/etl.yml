@@ -2,7 +2,7 @@ name: Nightly Google Sheets → BigQuery ETL
 
 on:
   schedule:
-    - cron: "15 01 * * *"   # 01:15 UTC ≈ 04:15 Asia/Amman
+    - cron: "15 01 * * *"   # 01:15 UTC (04:15 Asia/Amman)
   workflow_dispatch:
 
 jobs:
@@ -33,11 +33,11 @@ jobs:
         run: |
           ls -la
           python - << 'PY'
-          import os, json, sys, pathlib
-          print("Python:", sys.version)
-          print("Has config.json:", pathlib.Path("config.json").exists())
-          print("Has GOOGLE_CREDENTIALS_JSON secret:", bool(os.getenv("GOOGLE_CREDENTIALS_JSON")))
-          PY
+import os, sys, pathlib
+print("Python:", sys.version)
+print("Has config.json:", pathlib.Path("config.json").exists())
+print("Has GOOGLE_CREDENTIALS_JSON secret in env? (should be False here):", bool(os.getenv("GOOGLE_CREDENTIALS_JSON")))
+PY
 
       - name: Write Google credentials file from secret
         run: |
@@ -54,7 +54,7 @@ PY
         env:
           ETL_CONFIG_FILE: config.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
-          GCP_PROJECT: PowerBI-ETL     # or remove if your key already implies the project
-          BQ_DATASET: ETL_Dataset        # make sure this matches your BigQuery dataset
+          # GCP_PROJECT: your-project-id   # set only if needed; otherwise comment out
+          BQ_DATASET: etl_dataset
         run: |
-          python ETLGS_Postgres_gsheet_Final.py   # <-- use your actual script filename
+          python ETLGS_Postgres_gsheet_Final.py   # <-- ensure this matches your script filename
