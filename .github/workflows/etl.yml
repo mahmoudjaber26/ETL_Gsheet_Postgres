@@ -1,14 +1,14 @@
-
-name: Nightly Google Sheets → BigQuery
+name: Nightly Google Sheets → BigQuery ETL
 
 on:
   schedule:
-    - cron: "15 1 * * *"  # runs daily at 01:15 UTC
+    - cron: "15 01 * * *"   # 01:15 UTC ≈ 04:15 Asia/Amman
   workflow_dispatch:
 
 jobs:
   run-etl:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repo
@@ -18,24 +18,43 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install google-cloud-bigquery pandas gspread oauth2client
+          pip install \
+            pandas==2.2.* \
+            pyarrow>=14 \
+            google-cloud-bigquery>=3.20.0 \
+            gspread oauth2client
+
+      - name: Sanity: show files and secrets presence
+        run: |
+          ls -la
+          python - << 'PY'
+          import os, json, sys, pathlib
+          print("Python:", sys.version)
+          print("Has config.json:", pathlib.Path("config.json").exists())
+          print("Has GOOGLE_CREDENTIALS_JSON secret:", bool(os.getenv("GOOGLE_CREDENTIALS_JSON")))
+          PY
 
       - name: Write Google credentials file from secret
         run: |
           echo "$GOOGLE_CREDENTIALS_JSON" > powerbi-etl-creds.json
+          python - << 'PY'
+import json
+data = json.load(open('powerbi-etl-creds.json'))
+print("Service account email:", data.get('client_email'))
+PY
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
-      - name: Run ETL
+      - name: Run ETL (Sheets → BigQuery)
         env:
           ETL_CONFIG_FILE: config.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
-          GCP_PROJECT: powerbi-etl
-          BQ_DATASET: ETL_Dataset
+          GCP_PROJECT: PowerBI-ETL     # or remove if your key already implies the project
+          BQ_DATASET: ETL_Dataset        # make sure this matches your BigQuery dataset
         run: |
-          python ETLGS_Postgres_gsheet_Final.py
-          
+          python ETLGS_Postgres_gsheet_Final.py   # <-- use your actual script filename
