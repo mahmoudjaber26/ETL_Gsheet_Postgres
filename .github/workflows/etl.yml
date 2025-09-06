@@ -1,5 +1,5 @@
 
-name: Nightly Google Sheets → Neon ETL
+name: Nightly Google Sheets → BigQuery
 
 on:
   schedule:
