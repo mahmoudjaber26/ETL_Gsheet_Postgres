@@ -1,3 +1,4 @@
+pip install google-cloud-bigquery pandas gspread oauth2client
 name: Nightly Google Sheets → Neon ETL
 
 on:
