@@ -29,7 +29,7 @@ jobs:
             google-cloud-bigquery>=3.20.0 \
             gspread oauth2client
 
-      - name: Sanity: show files and secrets presence
+      - name: Sanity show files and secrets presence
         run: |
           ls -la
           python - << 'PY'
