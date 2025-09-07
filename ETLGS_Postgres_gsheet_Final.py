@@ -20,6 +20,10 @@ console.setLevel(logging.INFO)
 console.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logging.getLogger().addHandler(console)
 
+# Allow DEBUG via env
+if os.getenv("DEBUG", "0") in ("1", "true", "True"):
+    logging.getLogger().setLevel(logging.DEBUG)
+
 # ================ CONFIG =================
 CONFIG_FILE = os.getenv("ETL_CONFIG_FILE", "config.json")
 GSHEET_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "powerbi-etl-e1ebfd104446.json")
@@ -28,16 +32,24 @@ BQ_DATASET = os.getenv("BQ_DATASET", "etl_dataset")  # use lowercase id
 
 # ================ HELPERS ================
 def connect_gsheet():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(GSHEET_CREDENTIALS, scope)
-    client = gspread.authorize(creds)
-    logging.info("✅ Connected to Google Sheets")
-    return client
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name(GSHEET_CREDENTIALS, scope)
+        client = gspread.authorize(creds)
+        logging.info("✅ Connected to Google Sheets")
+        return client
+    except Exception:
+        logging.exception("❌ Failed to connect to Google Sheets")
+        raise
 
 def connect_bigquery():
-    client = bigquery.Client(project=GCP_PROJECT) if GCP_PROJECT else bigquery.Client()
-    logging.info(f"✅ Connected to BigQuery (project={client.project})")
-    return client
+    try:
+        client = bigquery.Client(project=GCP_PROJECT) if GCP_PROJECT else bigquery.Client()
+        logging.info(f"✅ Connected to BigQuery (project={client.project})")
+        return client
+    except Exception:
+        logging.exception("❌ Failed to connect to BigQuery")
+        raise
 
 def safe_table_name(name: str) -> str:
     import re
@@ -55,29 +67,35 @@ def ensure_dataset(client: bigquery.Client, dataset_id: str):
         client.create_dataset(ds, exists_ok=True)
 
 def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.DataFrame):
-    if df.empty:
-        logging.info(f"⚠ No data to load for {table}")
-        return
+    try:
+        if df.empty:
+            logging.info(f"⚠ No data to load for {table}")
+            return
 
-    df.columns = [str(c).strip() for c in df.columns]
-    if "Submitted At" in df.columns:
-        df["Submitted At"] = pd.to_datetime(df["Submitted At"], errors="coerce")
+        # Normalize columns and coerce timestamps
+        df.columns = [str(c).strip() for c in df.columns]
+        if "Submitted At" in df.columns:
+            df["Submitted At"] = pd.to_datetime(df["Submitted At"], errors="coerce")
 
-    ensure_dataset(client, dataset)
+        ensure_dataset(client, dataset)
 
-    table_id = f"{client.project}.{dataset}.{safe_table_name(table)}"
-    job_config = bigquery.LoadJobConfig(
-        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        autodetect=True,
-        schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
-    )
-    logging.info(f"⬆️ Loading {len(df)} rows into {table_id}")
-    job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
-    job.result()
-    logging.info(f"✅ Loaded {len(df)} rows into {table_id}")
+        table_id = f"{client.project}.{dataset}.{safe_table_name(table)}"
+        job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            autodetect=True,
+            schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+        )
+
+        logging.info(f"⬆️ Loading {len(df)} rows into {table_id}")
+        job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
+        job.result()
+        logging.info(f"✅ Loaded {len(df)} rows into {table_id}")
+    except Exception:
+        logging.exception(f"❌ BigQuery load failed for table={table}")
+        raise
 
 # ================ MAIN ====================
-if __name__ == "__main__":
+if _name_ == "_main_":
     logging.info("🚀 Starting ETL Job (BigQuery)")
     try:
         gclient = connect_gsheet()
@@ -101,12 +119,14 @@ if __name__ == "__main__":
                     if not rows:
                         logging.info(f"⚠ Sheet '{ws_name}' empty; skipping")
                         continue
+
                     df = pd.DataFrame(rows)
                     df = df.loc[:, df.columns.notna()]
                     load_to_bigquery(bq_client, BQ_DATASET, table_name, df)
-                except Exception as e:
-                    logging.error(f"❌ Failed loading sheet {ws_name} into {table_name}: {e}")
-
-    except Exception as e:
-        logging.error(f"❌ ETL job failed: {e}")
-    logging.info("✅ ETL Job Finished")
+                except Exception:
+                    logging.exception(f"❌ Failed loading sheet {ws_name} into {table_name}")
+    except Exception:
+        logging.exception("❌ ETL job failed (top-level)")
+        raise
+    finally:
+        logging.info("✅ ETL Job Finished")
