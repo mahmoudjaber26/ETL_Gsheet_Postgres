@@ -66,23 +66,86 @@ def ensure_dataset(client: bigquery.Client, dataset_id: str):
         ds = bigquery.Dataset(full_id)
         client.create_dataset(ds, exists_ok=True)
 
+def bq_safe_columns(df):
+    """
+    Return a copy of df with BigQuery-safe column names and a mapping dict.
+    Rules:
+      - strip spaces
+      - lowercase
+      - replace any non [a-z0-9_] with _
+      - ensure starts with a letter or underscore (prefix 'col_' if not)
+      - truncate to 300 chars (BQ limit)
+      - deduplicate by appending _2, _3, ...
+    """
+    orig = list(df.columns)
+    new_cols = []
+    seen = set()
+    for c in orig:
+        s = str(c).strip().lower()
+        s = re.sub(r'[^a-z0-9_]', '_', s)  # spaces & punctuation -> _
+        if not re.match(r'^[a-z_]', s):
+            s = 'col_' + s
+        s = s[:300] if len(s) > 300 else s
+        if s == '' or s == '_':
+            s = 'col'
+        base = s
+        i = 2
+        while s in seen:
+            suffix = f"_{i}"
+            s = (base[:300-len(suffix)] if len(base) + len(suffix) > 300 else base) + suffix
+            i += 1
+        seen.add(s)
+        new_cols.append(s)
+
+    mapping = dict(zip(orig, new_cols))
+    if mapping != {c: c for c in orig}:
+        logging.info(f"🔤 Column rename mapping applied: {mapping}")
+    df2 = df.copy()
+    df2.columns = new_cols
+    return df2, mapping
+
 def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.DataFrame):
     try:
         if df.empty:
             logging.info(f"⚠ No data to load for {table}")
             return
 
-        # Normalize columns and coerce timestamps
-        df.columns = [str(c).strip() for c in df.columns]
-        if "Submitted At" in df.columns:
-            df["Submitted At"] = pd.to_datetime(df["Submitted At"], errors="coerce")
+        # 1) Sanitize columns to BQ-safe
+        df, colmap = bq_safe_columns(df)
 
+        # 2) Normalize timestamp column name & types
+        #    Your Google Forms header was "Submitted At"; after sanitize it becomes "submitted_at"
+        has_ts = "submitted_at" in [c.lower() for c in df.columns]
+        # make a lowercase-indexed view
+        lower_to_actual = {c.lower(): c for c in df.columns}
+        ts_col = lower_to_actual.get("submitted_at")
+
+        if ts_col:
+            df[ts_col] = pd.to_datetime(df[ts_col], errors="coerce")
+
+        # 3) Force all non-timestamp columns to STRING to avoid Arrow INT64 issues
+        for c in df.columns:
+            if c != ts_col:
+                # convert everything else to string; keep NaN as None
+                df[c] = df[c].where(df[c].isna(), df[c].astype(str))
+
+        # 4) Ensure dataset exists
         ensure_dataset(client, dataset)
 
         table_id = f"{client.project}.{dataset}.{safe_table_name(table)}"
+
+        # 5) Build explicit schema: TIMESTAMP for submitted_at, STRING for everything else
+        schema = []
+        for c in df.columns:
+            if ts_col and c == ts_col:
+                schema.append(bigquery.SchemaField(c, "TIMESTAMP"))
+            else:
+                schema.append(bigquery.SchemaField(c, "STRING"))
+
         job_config = bigquery.LoadJobConfig(
             write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-            autodetect=True,
+            autodetect=False,  # we provide schema explicitly
+            schema=schema,
             schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
         )
 
@@ -90,6 +153,7 @@ def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.D
         job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
         job.result()
         logging.info(f"✅ Loaded {len(df)} rows into {table_id}")
+
     except Exception:
         logging.exception(f"❌ BigQuery load failed for table={table}")
         raise
@@ -130,4 +194,5 @@ if __name__ == "__main__":
         raise
     finally:
         logging.info("✅ ETL Job Finished")
+
 
