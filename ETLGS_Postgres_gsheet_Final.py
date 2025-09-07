@@ -2,7 +2,7 @@ import logging
 import os
 import json
 from typing import Dict
-
+import re
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -194,5 +194,6 @@ if __name__ == "__main__":
         raise
     finally:
         logging.info("✅ ETL Job Finished")
+
 
 
