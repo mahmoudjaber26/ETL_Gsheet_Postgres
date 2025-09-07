@@ -31,8 +31,8 @@ jobs:
 
       - name: Sanity: show files and secrets presence
         run: |
-          ls -la
-          python -c "import os,sys,pathlib; print('Python:', sys.version); print('Has config.json:', pathlib.Path('config.json').exists()); print('Has GOOGLE_CREDENTIALS_JSON secret in env? (should be False here):', bool(os.getenv('GOOGLE_CREDENTIALS_JSON')))"
+         ls -la
+         python -c "import os,sys,pathlib; print('Python:', sys.version); print('Has config.json:', pathlib.Path('config.json').exists()); print('Has GOOGLE_CREDENTIALS_JSON secret in env? (should be False here):', bool(os.getenv('GOOGLE_CREDENTIALS_JSON')))"
       
       - name: Write Google credentials file from secret 
        run: |
