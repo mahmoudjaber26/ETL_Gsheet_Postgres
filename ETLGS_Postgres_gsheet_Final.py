@@ -95,7 +95,7 @@ def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.D
         raise
 
 # ================ MAIN ====================
-if _name_ == "_main_":
+if __name__ == "__main__":
     logging.info("🚀 Starting ETL Job (BigQuery)")
     try:
         gclient = connect_gsheet()
@@ -130,3 +130,4 @@ if _name_ == "_main_":
         raise
     finally:
         logging.info("✅ ETL Job Finished")
+
