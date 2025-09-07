@@ -4,15 +4,20 @@ on:
   schedule:
     - cron: "15 01 * * *"   # 01:15 UTC (≈ 04:15 Amman)
   workflow_dispatch:
+    inputs:
+      debug:
+        description: "Enable verbose debug logging"
+        required: false
+        default: "false"
 
 jobs:
-  run-etl:
+  etl:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     env:
-      # keep dataset lowercase; change if you used a different one
-      BQ_DATASET: etl_dataset
+      BQ_DATASET: etl_dataset                                   # keep lowercase
+      DEBUG: ${{ github.event.inputs.debug || 'false' }}
 
     steps:
       - name: Checkout repo
@@ -26,62 +31,85 @@ jobs:
 
       - name: Install deps
         run: |
-          set -e
+          set -euxo pipefail
           python -m pip install --upgrade pip
           pip install \
             pandas==2.2.* \
             pyarrow>=14 \
             google-cloud-bigquery>=3.20.0 \
             gspread oauth2client
+          pip freeze > .pip-freeze.txt
 
       - name: Sanity — files and Python
         run: |
-          set -e
+          set -euxo pipefail
           ls -la
-          python -c "import sys, pathlib; print('Python:', sys.version); print('Has config.json:', pathlib.Path('config.json').exists())"
+          python - <<'PY'
+          import sys, pathlib, os
+          print("Python:", sys.version)
+          print("Has config.json:", pathlib.Path("config.json").exists())
+          print("DEBUG env:", os.getenv("DEBUG"))
+          PY
 
       - name: Write Google credentials file from secret
         run: |
-          set -e
+          set -euxo pipefail
           echo "$GOOGLE_CREDENTIALS_JSON" > powerbi-etl-creds.json
-          python -c "import json; d=json.load(open('powerbi-etl-creds.json')); print('Service account email:', d.get('client_email'))"
+          python - <<'PY'
+          import json
+          d = json.load(open('powerbi-etl-creds.json'))
+          print("Service account email:", d.get('client_email'))
+          PY
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
-      - name: Smoke test — BigQuery permissions & dataset
+      - name: Smoke — BigQuery permissions & dataset
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
+          BQ_DATASET: ${{ env.BQ_DATASET }}
         run: |
-          set -e
+          set -euxo pipefail
           python - <<'PY'
           from google.cloud import bigquery
-          from google.api_core.exceptions import NotFound, Forbidden
+          from google.api_core.exceptions import NotFound
           import os, pandas as pd
           client = bigquery.Client()
-          print("Project:", client.project)
-          ds_id = os.getenv("BQ_DATASET","etl_dataset")
-          full_ds = f"{client.project}.{ds_id}"
-          print("Dataset target:", full_ds)
-            try:
-              client.get_dataset(full_ds)
-              print("Dataset exists.")
-                except NotFound:
-                    print("Dataset not found. Creating…")
-                    client.create_dataset(bigquery.Dataset(full_ds), exists_ok=True)
-                    # write tiny healthcheck table
-                    table_id = f"{full_ds}._healthcheck_"
-                    df = pd.DataFrame([{"ok": 1}])
-                    job = client.load_table_from_dataframe(df, table_id,job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE", autodetect=True))
-                    job.result()
-                    print("Healthcheck load OK → BigQuery creds/roles are good.")
-                    PY
+          ds_id = f"{client.project}.{os.getenv('BQ_DATASET','etl_dataset').lower()}"
+          try:
+              client.get_dataset(ds_id)
+              print("Dataset exists:", ds_id)
+          except NotFound:
+              print("Creating dataset:", ds_id)
+              client.create_dataset(bigquery.Dataset(ds_id), exists_ok=True)
+          
+          tbl = f"{ds_id}._healthcheck_"
+          df = pd.DataFrame([{"ok": 1}])
+          job = client.load_table_from_dataframe(
+              df, tbl,
+              job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE", autodetect=True)
+          )
+          job.result()
+          print("Healthcheck load OK → BQ creds/roles are good.")
+          PY
 
       - name: Run ETL (Sheets → BigQuery)
         env:
-          ETL_CONFIG_FILE: config.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
-          # GCP_PROJECT: your-project-id   # optional; remove if not needed
+          ETL_CONFIG_FILE: config.json
           BQ_DATASET: ${{ env.BQ_DATASET }}
+          DEBUG: ${{ env.DEBUG }}
         run: |
-          set -e
-          python ETLGS_Postgres_gsheet_Final.py   # <-- ensure this EXACTLY matches your script file name
+          set -euxo pipefail
+          # run and tee to capture a separate console log too
+          python ETLGS_Postgres_gsheet_Final.py 2>&1 | tee run-console.log
+
+      - name: Upload artifacts (logs & env)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: etl-run-artifacts
+          path: |
+            logs.txt
+            run-console.log
+            .pip-freeze.txt
+            powerbi-etl-creds.json
