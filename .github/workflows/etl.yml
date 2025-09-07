@@ -2,13 +2,17 @@ name: Nightly Google Sheets → BigQuery ETL
 
 on:
   schedule:
-    - cron: "15 01 * * *"   # 01:15 UTC (04:15 Asia/Amman)
+    - cron: "15 01 * * *"   # 01:15 UTC (≈ 04:15 Amman)
   workflow_dispatch:
 
 jobs:
   run-etl:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
+    env:
+      # keep dataset lowercase; change if you used a different one
+      BQ_DATASET: etl_dataset
 
     steps:
       - name: Checkout repo
@@ -22,6 +26,7 @@ jobs:
 
       - name: Install deps
         run: |
+          set -e
           python -m pip install --upgrade pip
           pip install \
             pandas==2.2.* \
@@ -29,23 +34,54 @@ jobs:
             google-cloud-bigquery>=3.20.0 \
             gspread oauth2client
 
-      - name: Sanity:show files and secrets presence
+      - name: Sanity — files and Python
         run: |
-         ls -la
-         python -c "import os,sys,pathlib; print('Python:', sys.version); print('Has config.json:', pathlib.Path('config.json').exists()); print('Has GOOGLE_CREDENTIALS_JSON secret in env? (should be False here):', bool(os.getenv('GOOGLE_CREDENTIALS_JSON')))"
-      
-      - name: Write Google credentials file from secret 
+          set -e
+          ls -la
+          python -c "import sys, pathlib; print('Python:', sys.version); print('Has config.json:', pathlib.Path('config.json').exists())"
+
+      - name: Write Google credentials file from secret
         run: |
+          set -e
           echo "$GOOGLE_CREDENTIALS_JSON" > powerbi-etl-creds.json
           python -c "import json; d=json.load(open('powerbi-etl-creds.json')); print('Service account email:', d.get('client_email'))"
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
+      - name: Smoke test — BigQuery permissions & dataset
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
+        run: |
+          set -e
+          python - <<'PY'
+          from google.cloud import bigquery
+          from google.api_core.exceptions import NotFound, Forbidden
+          import os, pandas as pd
+          client = bigquery.Client()
+          print("Project:", client.project)
+          ds_id = os.getenv("BQ_DATASET","etl_dataset")
+          full_ds = f"{client.project}.{ds_id}"
+          print("Dataset target:", full_ds)
+            try:
+              client.get_dataset(full_ds)
+              print("Dataset exists.")
+                except NotFound:
+                    print("Dataset not found. Creating…")
+                    client.create_dataset(bigquery.Dataset(full_ds), exists_ok=True)
+                    # write tiny healthcheck table
+                    table_id = f"{full_ds}._healthcheck_"
+                    df = pd.DataFrame([{"ok": 1}])
+                    job = client.load_table_from_dataframe(df, table_id,job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE", autodetect=True))
+                    job.result()
+                    print("Healthcheck load OK → BigQuery creds/roles are good.")
+                    PY
+
       - name: Run ETL (Sheets → BigQuery)
         env:
           ETL_CONFIG_FILE: config.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/powerbi-etl-creds.json
-          # GCP_PROJECT: your-project-id   # set only if needed; otherwise comment out
-          BQ_DATASET: etl_dataset
+          # GCP_PROJECT: your-project-id   # optional; remove if not needed
+          BQ_DATASET: ${{ env.BQ_DATASET }}
         run: |
-          python ETLGS_Postgres_gsheet_Final.py   # <-- ensure this matches your script filename
+          set -e
+          python ETLGS_Postgres_gsheet_Final.py   # <-- ensure this EXACTLY matches your script file name
