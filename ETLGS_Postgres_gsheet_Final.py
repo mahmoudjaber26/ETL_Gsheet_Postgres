@@ -105,58 +105,61 @@ def bq_safe_columns(df):
     return df2, mapping
 
 def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.DataFrame):
-    try:
-        if df.empty:
-            logging.info(f"⚠ No data to load for {table}")
-            return
+    if df.empty:
+        logging.info(f"⚠ No data to load for {table}")
+        return
 
-        # 1) Sanitize columns to BQ-safe
-        df, colmap = bq_safe_columns(df)
+    # Sanitize column names
+    df, _ = bq_safe_columns(df)
 
-        # 2) Normalize timestamp column name & types
-        #    Your Google Forms header was "Submitted At"; after sanitize it becomes "submitted_at"
-        has_ts = "submitted_at" in [c.lower() for c in df.columns]
-        # make a lowercase-indexed view
-        lower_to_actual = {c.lower(): c for c in df.columns}
-        ts_col = lower_to_actual.get("submitted_at")
+    # Normalize timestamp column
+    lower_to_actual = {c.lower(): c for c in df.columns}
+    ts_col = lower_to_actual.get("submitted_at")
+    if ts_col:
+        df[ts_col] = pd.to_datetime(df[ts_col], errors="coerce")
 
-        if ts_col:
-            df[ts_col] = pd.to_datetime(df[ts_col], errors="coerce")
+    # Convert other columns to string
+    for c in df.columns:
+        if c != ts_col:
+            df[c] = df[c].where(df[c].isna(), df[c].astype(str))
 
-        # 3) Force all non-timestamp columns to STRING to avoid Arrow INT64 issues
-        for c in df.columns:
-            if c != ts_col:
-                # convert everything else to string; keep NaN as None
-                df[c] = df[c].where(df[c].isna(), df[c].astype(str))
+    # Ensure dataset exists
+    ensure_dataset(client, dataset)
+    table_id = f"{client.project}.{dataset}.{safe_table_name(table)}"
 
-        # 4) Ensure dataset exists
-        ensure_dataset(client, dataset)
+    # Pre‑filter: remove rows where cdn already exists
+    if "cdn" in df.columns:
+        query = f"SELECT DISTINCT cdn FROM `{table_id}`"
+        existing = client.query(query).to_dataframe()
+        if not existing.empty:
+            before = len(df)
+            df = df[~df["cdn"].isin(existing["cdn"])]
+            after = len(df)
+            logging.info(f"🧹 Skipped {before - after} rows already in {table_id}")
 
-        table_id = f"{client.project}.{dataset}.{safe_table_name(table)}"
+    if df.empty:
+        logging.info(f"⚠ No new rows to load for {table}")
+        return
 
-        # 5) Build explicit schema: TIMESTAMP for submitted_at, STRING for everything else
-        schema = []
-        for c in df.columns:
-            if ts_col and c == ts_col:
-                schema.append(bigquery.SchemaField(c, "TIMESTAMP"))
-            else:
-                schema.append(bigquery.SchemaField(c, "STRING"))
+    # Build schema
+    schema = []
+    for c in df.columns:
+        if ts_col and c == ts_col:
+            schema.append(bigquery.SchemaField(c, "TIMESTAMP"))
+        else:
+            schema.append(bigquery.SchemaField(c, "STRING"))
 
-        job_config = bigquery.LoadJobConfig(
-            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-            autodetect=False,  # we provide schema explicitly
-            schema=schema,
-            schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
-        )
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        autodetect=False,
+        schema=schema,
+        schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+    )
 
-        logging.info(f"⬆️ Loading {len(df)} rows into {table_id}")
-        job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
-        job.result()
-        logging.info(f"✅ Loaded {len(df)} rows into {table_id}")
-
-    except Exception:
-        logging.exception(f"❌ BigQuery load failed for table={table}")
-        raise
+    logging.info(f"⬆️ Loading {len(df)} new rows into {table_id}")
+    job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
+    job.result()
+    logging.info(f"✅ Loaded {len(df)} new rows into {table_id}")
 
 # ================ MAIN ====================
 if __name__ == "__main__":
@@ -194,6 +197,7 @@ if __name__ == "__main__":
         raise
     finally:
         logging.info("✅ ETL Job Finished")
+
 
 
 
