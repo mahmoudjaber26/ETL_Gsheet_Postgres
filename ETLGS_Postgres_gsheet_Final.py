@@ -125,23 +125,11 @@ def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.D
 
     # Ensure dataset exists
     ensure_dataset(client, dataset)
-    table_id = f"{client.project}.{dataset}.{safe_table_name(table)}"
 
-    # Pre‑filter: remove rows where cdn already exists
-    if "cdn" in df.columns:
-        query = f"SELECT DISTINCT cdn FROM `{table_id}`"
-        existing = client.query(query).to_dataframe()
-        if not existing.empty:
-            before = len(df)
-            df = df[~df["cdn"].isin(existing["cdn"])]
-            after = len(df)
-            logging.info(f"🧹 Skipped {before - after} rows already in {table_id}")
+    target_table = f"{client.project}.{dataset}.{safe_table_name(table)}"
+    staging_table = f"{client.project}.{dataset}.{safe_table_name(table)}_staging"
 
-    if df.empty:
-        logging.info(f"⚠ No new rows to load for {table}")
-        return
-
-    # Build schema
+    # 1) Load batch into staging table (overwrite each run)
     schema = []
     for c in df.columns:
         if ts_col and c == ts_col:
@@ -149,17 +137,33 @@ def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.D
         else:
             schema.append(bigquery.SchemaField(c, "STRING"))
 
-    job_config = bigquery.LoadJobConfig(
-        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        autodetect=False,
+    load_config = bigquery.LoadJobConfig(
+        write_disposition="WRITE_TRUNCATE",
         schema=schema,
-        schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
     )
 
-    logging.info(f"⬆️ Loading {len(df)} new rows into {table_id}")
-    job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
-    job.result()
-    logging.info(f"✅ Loaded {len(df)} new rows into {table_id}")
+    logging.info(f"⬆️ Loading {len(df)} rows into staging table {staging_table}")
+    client.load_table_from_dataframe(df, staging_table, job_config=load_config).result()
+
+    # 2) Merge staging into target (insert only new cdn)
+    merge_sql = f"""
+    MERGE `{target_table}` T
+    USING `{staging_table}` S
+    ON T.cdn = S.cdn
+    WHEN NOT MATCHED THEN
+      INSERT ROW
+    """
+
+    logging.info(f"🔄 Merging staging into {target_table}")
+    client.query(merge_sql).result()
+    logging.info(f"✅ Merge complete for {table}")
+
+    # 3) (Optional) Drop staging table to keep dataset clean
+    try:
+        client.delete_table(staging_table, not_found_ok=True)
+        logging.info(f"🧹 Dropped staging table {staging_table}")
+    except Exception as e:
+        logging.warning(f"Could not drop staging table {staging_table}: {e}")
 
 # ================ MAIN ====================
 if __name__ == "__main__":
@@ -197,6 +201,7 @@ if __name__ == "__main__":
         raise
     finally:
         logging.info("✅ ETL Job Finished")
+
 
 
 
