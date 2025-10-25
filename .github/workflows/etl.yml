@@ -36,9 +36,11 @@ jobs:
           pip install \
             pandas==2.2.* \
             pyarrow>=14 \
+            db-dtypes>=1.0.0\
             google-cloud-bigquery>=3.20.0 \
             gspread oauth2client
           pip freeze > .pip-freeze.txt
+          
 
       - name: Sanity — files & Python
         run: |
