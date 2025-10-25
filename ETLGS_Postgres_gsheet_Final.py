@@ -129,14 +129,32 @@ def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.D
     target_table = f"{client.project}.{dataset}.{safe_table_name(table)}"
     staging_table = f"{client.project}.{dataset}.{safe_table_name(table)}_staging"
 
-    # 1) Load batch into staging table (overwrite each run)
+    # 🔹 Fetch target schema (if table exists)
+    try:
+        table_obj = client.get_table(target_table)
+        expected_cols = [field.name for field in table_obj.schema]
+
+        # Add any missing columns to df with None
+        for col in expected_cols:
+            if col not in df.columns:
+                df[col] = None
+
+        # Reorder df to match target schema
+        df = df[expected_cols]
+    except Exception:
+        # Table doesn't exist yet → first load will create it
+        logging.info(f"ℹ️ Target table {target_table} not found, will be created on first load")
+        expected_cols = list(df.columns)
+
+    # Build schema for staging
     schema = []
-    for c in df.columns:
+    for c in expected_cols:
         if ts_col and c == ts_col:
             schema.append(bigquery.SchemaField(c, "TIMESTAMP"))
         else:
             schema.append(bigquery.SchemaField(c, "STRING"))
 
+    # 1) Load batch into staging table (overwrite each run)
     load_config = bigquery.LoadJobConfig(
         write_disposition="WRITE_TRUNCATE",
         schema=schema,
@@ -158,13 +176,12 @@ def load_to_bigquery(client: bigquery.Client, dataset: str, table: str, df: pd.D
     client.query(merge_sql).result()
     logging.info(f"✅ Merge complete for {table}")
 
-    # 3) (Optional) Drop staging table to keep dataset clean
+    # 3) Drop staging table to keep dataset clean
     try:
         client.delete_table(staging_table, not_found_ok=True)
         logging.info(f"🧹 Dropped staging table {staging_table}")
     except Exception as e:
         logging.warning(f"Could not drop staging table {staging_table}: {e}")
-
 # ================ MAIN ====================
 if __name__ == "__main__":
     logging.info("🚀 Starting ETL Job (BigQuery)")
@@ -201,6 +218,7 @@ if __name__ == "__main__":
         raise
     finally:
         logging.info("✅ ETL Job Finished")
+
 
 
 
